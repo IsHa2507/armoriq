@@ -1,0 +1,63 @@
+import type { Rule, Approval } from "@/types/rule";
+
+export const mockRules: Rule[] = [
+  {
+    id: "rule-1",
+    name: "PII Redaction",
+    description: "Automatically redact personally identifiable information from responses.",
+    status: "active",
+    createdAt: "2026-05-01T10:00:00Z",
+    updatedAt: "2026-06-10T08:30:00Z",
+  },
+  {
+    id: "rule-2",
+    name: "Rate Limit Enforcement",
+    description: "Block requests exceeding 100 calls per minute per user.",
+    status: "active",
+    createdAt: "2026-05-03T11:00:00Z",
+    updatedAt: "2026-06-15T12:00:00Z",
+  },
+  {
+    id: "rule-3",
+    name: "Prompt Injection Filter",
+    description: "Detect and reject prompt injection attempts.",
+    status: "active",
+    createdAt: "2026-05-10T09:00:00Z",
+    updatedAt: "2026-06-18T09:00:00Z",
+  },
+  {
+    id: "rule-4",
+    name: "Toxicity Classifier",
+    description: "Flag responses with a toxicity score above threshold.",
+    status: "inactive",
+    createdAt: "2026-05-20T14:00:00Z",
+    updatedAt: "2026-06-01T14:00:00Z",
+  },
+  {
+    id: "rule-5",
+    name: "Hallucination Guard",
+    description: "Cross-check factual claims against approved knowledge sources.",
+    status: "pending",
+    createdAt: "2026-06-20T08:00:00Z",
+    updatedAt: "2026-06-20T08:00:00Z",
+  },
+];
+
+export const mockApprovals: Approval[] = [
+  {
+    id: "appr-1",
+    ruleId: "rule-5",
+    ruleName: "Hallucination Guard",
+    requestedBy: "alice@amor.ai",
+    status: "pending",
+    createdAt: "2026-06-20T08:00:00Z",
+  },
+  {
+    id: "appr-2",
+    ruleId: "rule-4",
+    ruleName: "Toxicity Classifier",
+    requestedBy: "bob@amor.ai",
+    status: "rejected",
+    createdAt: "2026-06-01T14:00:00Z",
+  },
+];
