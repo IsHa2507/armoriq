@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { GlassCard, SectionHeader } from "@/components/dashboard/widgets";
-import { guardrails } from "@/lib/mock/data";
 import { Plus, Ban, UserCheck, ShieldCheck, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { rulesAPI } from "@/services/api";
 
 function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   return (
@@ -20,10 +20,44 @@ function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   );
 }
 
-type Guardrail = typeof guardrails[number];
+type Guardrail = {
+  id: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  pattern?: string;
+  tool?: string;
+  [key: string]: any;
+};
 
 export function GuardrailsPage() {
-  const [rules, setRules] = useState<Guardrail[]>(guardrails);
+  const [rules, setRules] = useState<Guardrail[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Load rules from API
+  useEffect(() => {
+    loadRules();
+  }, []);
+
+  const loadRules = async () => {
+    try {
+      const data = await rulesAPI.getAll();
+      setRules(data);
+    } catch (error) {
+      console.error("Failed to load rules:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggle = async (ruleId: string) => {
+    try {
+      const updated = await rulesAPI.toggle(ruleId);
+      setRules((prev) => prev.map((r) => r.id === ruleId ? updated : r));
+    } catch (error) {
+      console.error("Failed to toggle rule:", error);
+    }
+  };
 
   const ruleTypes = [
     { icon: Ban,        label: "Block Tool",        color: "text-destructive bg-destructive/10" },
@@ -34,6 +68,10 @@ export function GuardrailsPage() {
 
   return (
     <>
+      {loading ? (
+        <div className="text-center py-8 text-muted-foreground">Loading rules...</div>
+      ) : (
+      <>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {ruleTypes.map((r) => (
           <button key={r.label} type="button" className="glass-card rounded-xl p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40">
@@ -61,24 +99,14 @@ export function GuardrailsPage() {
               <div key={r.id} className="group flex items-center gap-3 rounded-lg border border-border bg-card/30 p-3 transition-colors hover:border-primary/30">
                 <span className="font-mono text-[10px] text-muted-foreground">{r.id}</span>
                 <div className="flex flex-1 flex-wrap items-center gap-2 text-xs">
-                  <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-primary">IF</span>
-                  <span className="font-mono">{r.condition}</span>
-                  <span className="rounded bg-warning/10 px-2 py-0.5 font-mono text-warning">THEN</span>
-                  <span className={cn(
-                    "rounded px-2 py-0.5 font-mono font-semibold",
-                    r.action === "Block"            ? "bg-destructive/15 text-destructive" :
-                    r.action === "Require Approval" ? "bg-warning/15 text-warning" :
-                                                      "bg-primary/15 text-primary",
-                  )}>
-                    {r.action}
-                  </span>
+                  <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-primary">{r.type}</span>
+                  <span className="font-mono">{r.name}</span>
+                  {r.pattern && <span className="rounded bg-muted/50 px-2 py-0.5 font-mono text-muted-foreground">{r.pattern}</span>}
                 </div>
-                <span className="text-[10px] text-muted-foreground">{r.hits} hits</span>
+                <span className="text-[10px] text-muted-foreground">{r.hits || 0} hits</span>
                 <Toggle
                   on={r.enabled}
-                  onChange={() =>
-                    setRules((prev) => prev.map((x) => x.id === r.id ? { ...x, enabled: !x.enabled } : x))
-                  }
+                  onChange={() => handleToggle(r.id)}
                 />
               </div>
             ))}
@@ -131,6 +159,8 @@ export function GuardrailsPage() {
           </div>
         </GlassCard>
       </div>
+      </>
+      )}
     </>
   );
 }
