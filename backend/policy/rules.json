@@ -6,7 +6,7 @@
     "enabled": true,
     "priority": 10,
     "pattern": "delete_note",
-    "hits": 0
+    "hits": 3
   },
   {
     "id": "default-title-validation",
@@ -21,21 +21,21 @@
     "hits": 0
   },
   {
-    "id": "680db087-e076-449b-a06c-b62fecf30d48",
-    "name": "Block Create Note",
+    "id": "d0dce152-aa1e-4ca0-afb4-d26b2c5b5b3e",
+    "name": "AUDIT: Block create_note",
     "type": "BLOCK_TOOL",
-    "enabled": true,
-    "priority": 100,
-    "hits": 1,
+    "enabled": false,
+    "priority": 5,
+    "hits": 2,
     "pattern": "create_note"
   },
   {
-    "id": "64e3d85f-b154-4518-bf8d-63a0b8f24463",
-    "name": "Tool name equals list_notes",
+    "id": "1234070a-ed6b-4e21-8287-cbfadc7c9157",
+    "name": "AUDIT: Require Approval create_note",
     "type": "REQUIRE_APPROVAL",
     "enabled": true,
-    "priority": 100,
-    "hits": 0,
-    "pattern": "Require Approval"
+    "priority": 5,
+    "hits": 3,
+    "pattern": "create_note"
   }
 ]

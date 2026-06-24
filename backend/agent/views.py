@@ -18,11 +18,40 @@ logger = logging.getLogger("agent.views")
 
 # ── MCP server initialisation ─────────────────────────────────────────────────
 
-def init_mcp_servers():
-    notes_server_path = os.path.join(
-        os.path.dirname(__file__), "../../mcp_server/notes_server.py"
-    )
-    mcp_client.add_server("notes-server", "python3", [notes_server_path])
+def _server_path(filename: str) -> str:
+    """Resolve a filename relative to the project-level mcp_server/ directory."""
+    return os.path.join(os.path.dirname(__file__), "../../mcp_server", filename)
+
+
+def init_mcp_servers() -> None:
+    """
+    Register all MCP servers with the global mcp_client singleton.
+
+    Server 1 — notes-server   (custom, in-process notes CRUD)
+    Server 2 — filesystem-server  (sandboxed filesystem operations)
+
+    Both use the STDIO transport and the JSON-RPC 2.0 protocol that the
+    MCPClient already handles.  PolicyEngine governs every tool call from
+    both servers identically — no special-casing needed.
+    """
+    logger.info("[MCP] Initialising MCP servers…")
+
+    # ── Server 1: Notes MCP ───────────────────────────────────────────────
+    notes_path = _server_path("notes_server.py")
+    logger.info("[MCP] Registering notes-server | path=%s", notes_path)
+    mcp_client.add_server("notes-server", "python3", [notes_path])
+
+    # ── Server 2: Filesystem MCP ──────────────────────────────────────────
+    fs_path = _server_path("filesystem_server.py")
+    logger.info("[MCP] Registering filesystem-server | path=%s", fs_path)
+    mcp_client.add_server("filesystem-server", "python3", [fs_path])
+
+    status = mcp_client.get_server_status()
+    for name, info in status.items():
+        logger.info(
+            "[MCP] Server status | name=%-22s status=%-12s tools=%d",
+            name, info["status"], info["tool_count"],
+        )
 
 
 try:

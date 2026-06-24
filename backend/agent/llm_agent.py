@@ -76,36 +76,89 @@ class MockLLM:
             if id_m:
                 return {"tool": "get_note", "arguments": {"note_id": id_m.group(1)}}
 
+        # ── filesystem: write file ────────────────────────────────────────
+        if any(w in msg for w in ("write file", "create file", "save file", "write to file")):
+            path_m = re.search(r"(?:file\s+|to\s+)[\"']?([\w./\-]+\.\w+)[\"']?", message, re.IGNORECASE)
+            content_m = re.search(r"(?:content|with|:)\s+[\"']?(.+)[\"']?$", message, re.IGNORECASE)
+            path = path_m.group(1).strip() if path_m else "output.txt"
+            content = content_m.group(1).strip() if content_m else ""
+            return {"tool": "fs_write_file", "arguments": {"path": path, "content": content}}
+
+        # ── filesystem: read file ─────────────────────────────────────────
+        if any(w in msg for w in ("read file", "show file", "open file", "get file", "cat file")):
+            path_m = re.search(r"(?:file\s+)[\"']?([\w./\-]+)[\"']?", message, re.IGNORECASE)
+            path = path_m.group(1).strip() if path_m else "output.txt"
+            return {"tool": "fs_read_file", "arguments": {"path": path}}
+
+        # ── filesystem: list directory ────────────────────────────────────
+        if any(w in msg for w in ("list files", "list directory", "show directory",
+                                   "list dir", "show dir", "ls ")):
+            path_m = re.search(r"(?:directory|dir|in|of)\s+[\"']?([\w./\-]+)[\"']?",
+                                message, re.IGNORECASE)
+            path = path_m.group(1).strip() if path_m else "."
+            return {"tool": "fs_list_directory", "arguments": {"path": path}}
+
+        # ── filesystem: check file existence ──────────────────────────────
+        if any(w in msg for w in ("file exists", "does file exist", "check file",
+                                   "exists file")):
+            path_m = re.search(r"(?:file\s+)[\"']?([\w./\-]+)[\"']?", message, re.IGNORECASE)
+            path = path_m.group(1).strip() if path_m else "output.txt"
+            return {"tool": "fs_file_exists", "arguments": {"path": path}}
+
+        # ── filesystem: delete file ───────────────────────────────────────
+        if any(w in msg for w in ("delete file", "remove file", "erase file")):
+            path_m = re.search(r"(?:file\s+)[\"']?([\w./\-]+\.\w+)[\"']?", message, re.IGNORECASE)
+            path = path_m.group(1).strip() if path_m else "output.txt"
+            return {"tool": "fs_delete_file", "arguments": {"path": path}}
+
         return None
 
     def generate_response(self, message: str, tool_result: str = None) -> str:
         msg = message.lower()
         if tool_result:
-            if "create" in msg:
+            if "create" in msg and "file" not in msg:
                 return f"I've successfully created the note for you! {tool_result}"
-            if "list" in msg:
+            if "list" in msg and "note" in msg:
                 return f"Here are all your notes:\n{tool_result}"
-            if "get" in msg or "show" in msg:
+            if ("get" in msg or "show" in msg) and "note" in msg:
                 return f"Here's the note you requested:\n{tool_result}"
-            if "update" in msg or "edit" in msg:
+            if ("update" in msg or "edit" in msg) and "note" in msg:
                 return f"I've updated the note: {tool_result}"
-            if "delete" in msg or "remove" in msg:
+            if ("delete" in msg or "remove" in msg) and "note" in msg:
                 return f"The note has been deleted: {tool_result}"
+            # filesystem responses
+            if "write file" in msg or "create file" in msg or "save file" in msg:
+                return f"File written successfully:\n{tool_result}"
+            if "read file" in msg or "show file" in msg or "open file" in msg:
+                return f"Here is the file content:\n{tool_result}"
+            if "list files" in msg or "list dir" in msg or "list directory" in msg:
+                return f"Here are the directory contents:\n{tool_result}"
+            if "file exists" in msg or "check file" in msg:
+                return f"File existence check result:\n{tool_result}"
+            if "delete file" in msg or "remove file" in msg:
+                return f"File deleted:\n{tool_result}"
             return f"Operation completed: {tool_result}"
         if any(w in msg for w in ("hello", "hi", "hey", "help")):
             return (
-                "Hello! I'm your AI assistant with access to a notes management system. "
-                "I can help you:\n"
-                "- Create notes: \"Create a note titled X with content Y\"\n"
-                "- List notes:   \"List all notes\"\n"
-                "- Get a note:   \"Get note 1\"\n"
-                "- Update a note:\"Update note 1 to have content Z\"\n"
-                "- Delete a note:\"Delete note 1\"\n\n"
+                "Hello! I'm your AI assistant with access to a notes management system "
+                "and a filesystem workspace. I can help you:\n"
+                "Notes:\n"
+                "  - Create notes: \"Create a note titled X with content Y\"\n"
+                "  - List notes:   \"List all notes\"\n"
+                "  - Get a note:   \"Get note 1\"\n"
+                "  - Update a note:\"Update note 1 to have content Z\"\n"
+                "  - Delete a note:\"Delete note 1\"\n\n"
+                "Filesystem:\n"
+                "  - Write file:   \"Write file hello.txt with content Hello World\"\n"
+                "  - Read file:    \"Read file hello.txt\"\n"
+                "  - List dir:     \"List files in .\"\n"
+                "  - Check file:   \"Does file hello.txt exist?\"\n"
+                "  - Delete file:  \"Delete file hello.txt\"\n\n"
                 "What would you like to do?"
             )
         return (
             "I'm not sure what you'd like me to do. Could you please rephrase? "
-            "You can ask me to create, list, get, update, or delete notes."
+            "I can manage notes or perform filesystem operations."
         )
 
 

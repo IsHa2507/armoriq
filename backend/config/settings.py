@@ -186,6 +186,11 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
+        "agent.mcp_client": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
     "root": {
         "handlers": ["console"],

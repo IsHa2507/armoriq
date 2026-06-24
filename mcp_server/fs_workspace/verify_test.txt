@@ -1,0 +1,1 @@
+ArmorIQ MCP verification — filesystem-server OK
