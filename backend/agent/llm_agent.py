@@ -235,6 +235,91 @@ class MockLLM:
                 logger.debug("[AGENT] Parsed intent | tool=get_note note_id=%s", id_m.group(1))
                 return {"tool": "get_note", "arguments": {"note_id": id_m.group(1)}}
 
+        # ══════════════════════════════════════════════════════════════════
+        # CONTEXT7 INTENTS  (remote public MCP server — live docs)
+        # Tool names discovered dynamically — these patterns route to the
+        # tools exposed by Context7 via tools/list. No tool names hardcoded.
+        # ══════════════════════════════════════════════════════════════════
+
+        # ── resolve-library-id ────────────────────────────────────────────
+        # Triggers: "find docs for X", "look up library X", "resolve X",
+        #           "find library id for X", "search context7 for X"
+        _resolve_trigger = bool(re.search(
+            r"\b(find\s+(docs?\s+for|library(\s+id)?\s+for)|"
+            r"look\s+up\s+(library|docs?)\s+for|"
+            r"resolve\s+(library|id|docs?)|"
+            r"search\s+context7\s+for|"
+            r"context7\s+(find|search|lookup|look\s+up))\b",
+            msg,
+        ))
+        if _resolve_trigger:
+            # Extract the library name — everything after the trigger phrase
+            lib_m = re.search(
+                r"(?:find\s+(?:docs?\s+for|library(?:\s+id)?\s+for)|"
+                r"look\s+up\s+(?:library|docs?)\s+for|"
+                r"resolve\s+(?:library|id|docs?)\s+(?:for\s+)?|"
+                r"search\s+context7\s+for|"
+                r"context7\s+(?:find|search|lookup|look\s+up)\s+)"
+                r"([\\w.\\-/]+(?:\\s+[\\w.\\-/]+){0,3})",
+                message,
+                re.IGNORECASE,
+            )
+            library_name = lib_m.group(1).strip() if lib_m else message.strip()
+            logger.debug("[AGENT] Parsed intent | tool=resolve-library-id library=%s", library_name)
+            return {
+                "tool": "resolve-library-id",
+                "arguments": {
+                    "libraryName": library_name,
+                    "query": f"Find documentation for {library_name}",
+                },
+            }
+
+        # ── query-docs ────────────────────────────────────────────────────
+        # Triggers: "get docs for X", "show documentation for X",
+        #           "how do I use X", "fetch docs /org/project",
+        #           "context7 docs X", "documentation for X"
+        _docs_trigger = bool(re.search(
+            r"\b(get\s+docs?\s+for|show\s+docs?\s+for|"
+            r"fetch\s+docs?\s+(?:for|from)|"
+            r"documentation\s+for|show\s+documentation|"
+            r"context7\s+docs?|query\s+docs?|"
+            r"how\s+(?:do\s+i|to)\s+use\s+\S+\s+(?:in|with)|"
+            r"docs?\s+for\s+/)\b",
+            msg,
+        ))
+        if _docs_trigger:
+            # Look for a library ID in /org/project format first
+            id_m = re.search(r"(/[\w\-]+/[\w\-]+(?:/[\w.\-]+)?)", message)
+            if id_m:
+                library_id = id_m.group(1)
+                query_m = re.search(
+                    r"(?:about|for|on|regarding)\s+(.+?)(?:\s+in\s+|$)", message, re.IGNORECASE
+                )
+                query = query_m.group(1).strip() if query_m else f"documentation for {library_id}"
+                logger.debug("[AGENT] Parsed intent | tool=query-docs library_id=%s", library_id)
+                return {
+                    "tool": "query-docs",
+                    "arguments": {"libraryId": library_id, "query": query},
+                }
+            # No library ID — extract topic after trigger phrase
+            topic_m = re.search(
+                r"(?:get\s+docs?\s+for|show\s+docs?\s+for|"
+                r"fetch\s+docs?\s+(?:for|from)|documentation\s+for|"
+                r"context7\s+docs?\s+for?|"
+                r"how\s+(?:do\s+i|to)\s+use\s+)([\\w.\\-/]+(?:\\s+[\\w.\\-/]+){0,3})",
+                message,
+                re.IGNORECASE,
+            )
+            topic = topic_m.group(1).strip() if topic_m else message.strip()
+            logger.debug("[AGENT] Parsed intent | tool=query-docs topic=%s", topic)
+            return {
+                "tool": "query-docs",
+                "arguments": {
+                    "libraryId": f"/{topic.lower().replace(' ', '-')}",
+                    "query": topic,
+                },
+            }
+
         logger.debug("[AGENT] No intent matched | message=%.120s", message)
         return None
 
@@ -270,6 +355,11 @@ class MockLLM:
                 return f"File existence check result:\n{tool_result}"
             if any(w in msg for w in ("delete file", "remove file", "erase file")):
                 return f"File deleted:\n{tool_result}"
+            # ── context7 ───────────────────────────────────────────────────
+            if "resolve" in msg or "library" in msg or "library-id" in tool_result[:50]:
+                return f"Here are the matching libraries from Context7:\n{tool_result}"
+            if any(w in msg for w in ("docs", "documentation", "query-docs", "how do i", "how to use")):
+                return f"Here is the documentation from Context7:\n{tool_result}"
             return f"Operation completed:\n{tool_result}"
         if any(w in msg for w in ("hello", "hi", "hey", "help")):
             return (
