@@ -45,6 +45,7 @@ _DEFAULT_RULES: List[Dict[str, Any]] = [
         "enabled": True,
         "priority": 10,
         "pattern": "delete_note",
+        "hits": 0,
     },
     {
         "id": "default-title-validation",
@@ -56,6 +57,7 @@ _DEFAULT_RULES: List[Dict[str, Any]] = [
         "parameter": "title",
         "validation_type": "matches_regex",
         "validation_value": r"^[a-zA-Z0-9_\s\-]+$",
+        "hits": 0,
     },
 ]
 
@@ -96,6 +98,7 @@ class RuleStore:
             "type": data.get("type", "BLOCK_TOOL"),
             "enabled": data.get("enabled", True),
             "priority": data.get("priority", 100),
+            "hits": 0,
         }
         # Copy any extra fields (pattern, tool, parameter …)
         for k, v in data.items():
@@ -103,7 +106,14 @@ class RuleStore:
                 rule[k] = v
         rules.append(rule)
         self._write(rules)
-        logger.info("Rule created: id=%s name=%s type=%s", rule["id"], rule["name"], rule["type"])
+        logger.info(
+            "[RULES] Rule DEPLOYED | id=%s name=%s type=%s enabled=%s pattern=%s",
+            rule["id"],
+            rule["name"],
+            rule["type"],
+            rule["enabled"],
+            rule.get("pattern") or rule.get("tool", ""),
+        )
         return rule
 
     def update_rule(self, rule_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -112,7 +122,12 @@ class RuleStore:
             if rule["id"] == rule_id:
                 rules[i] = {**rule, **updates, "id": rule_id}
                 self._write(rules)
-                logger.info("Rule updated: id=%s", rule_id)
+                logger.info(
+                    "[RULES] Rule updated | id=%s name=%s enabled=%s",
+                    rule_id,
+                    rules[i].get("name"),
+                    rules[i].get("enabled"),
+                )
                 return rules[i]
         return None
 
@@ -122,7 +137,7 @@ class RuleStore:
         if len(new_rules) == len(rules):
             return False
         self._write(new_rules)
-        logger.info("Rule deleted: id=%s", rule_id)
+        logger.info("[RULES] Rule deleted | id=%s", rule_id)
         return True
 
     def toggle_rule(self, rule_id: str) -> Optional[Dict[str, Any]]:
@@ -132,10 +147,25 @@ class RuleStore:
                 rules[i]["enabled"] = not rule.get("enabled", False)
                 self._write(rules)
                 logger.info(
-                    "Rule toggled: id=%s enabled=%s", rule_id, rules[i]["enabled"]
+                    "[RULES] Rule toggled | id=%s name=%s enabled=%s — takes effect on next tool call",
+                    rule_id,
+                    rules[i].get("name"),
+                    rules[i]["enabled"],
                 )
                 return rules[i]
         return None
+
+    def increment_hits(self, rule_id: str) -> None:
+        """Increment the hit counter for a rule in rules.json (best-effort)."""
+        try:
+            rules = self._read()
+            for i, rule in enumerate(rules):
+                if rule["id"] == rule_id:
+                    rules[i]["hits"] = rule.get("hits", 0) + 1
+                    self._write(rules)
+                    return
+        except Exception as exc:
+            logger.warning("Failed to increment hits for rule %s: %s", rule_id, exc)
 
     # ── internal helpers ──────────────────────────────────────────────────────
 

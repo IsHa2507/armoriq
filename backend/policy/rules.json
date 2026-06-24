@@ -5,7 +5,8 @@
     "type": "BLOCK_TOOL",
     "enabled": true,
     "priority": 10,
-    "pattern": "delete_note"
+    "pattern": "delete_note",
+    "hits": 0
   },
   {
     "id": "default-title-validation",
@@ -16,6 +17,25 @@
     "tool": "create_note",
     "parameter": "title",
     "validation_type": "matches_regex",
-    "validation_value": "^[a-zA-Z0-9_\\s\\-]+$"
+    "validation_value": "^[a-zA-Z0-9_\\s\\-]+$",
+    "hits": 0
+  },
+  {
+    "id": "680db087-e076-449b-a06c-b62fecf30d48",
+    "name": "Block Create Note",
+    "type": "BLOCK_TOOL",
+    "enabled": true,
+    "priority": 100,
+    "hits": 1,
+    "pattern": "create_note"
+  },
+  {
+    "id": "64e3d85f-b154-4518-bf8d-63a0b8f24463",
+    "name": "Tool name equals list_notes",
+    "type": "REQUIRE_APPROVAL",
+    "enabled": true,
+    "priority": 100,
+    "hits": 0,
+    "pattern": "Require Approval"
   }
 ]

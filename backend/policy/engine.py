@@ -93,11 +93,21 @@ class PolicyEngine:
         rules = rule_store.get_rules()
 
         logger.info(
-            "[POLICY] Evaluating | tool=%s session=%s rules_active=%d",
+            "[POLICY] Evaluating | tool=%s session=%s total_rules=%d active_rules=%d",
             tool_name,
             session_id,
+            len(rules),
             sum(1 for r in rules if r.get("enabled")),
         )
+        for r in rules:
+            logger.debug(
+                "[POLICY] Loaded rule | id=%s name=%s type=%s enabled=%s pattern=%s",
+                r.get("id"),
+                r.get("name"),
+                r.get("type"),
+                r.get("enabled"),
+                r.get("pattern") or r.get("tool", ""),
+            )
 
         decision: Dict[str, Any] = {
             "action": "allow",
@@ -110,9 +120,21 @@ class PolicyEngine:
         try:
             for rule in rules:
                 if not rule.get("enabled", False):
+                    logger.debug(
+                        "[POLICY] Skipping disabled rule | id=%s name=%s",
+                        rule.get("id"),
+                        rule.get("name"),
+                    )
                     continue
 
                 rule_type = rule.get("type")
+                logger.debug(
+                    "[POLICY] Checking rule | id=%s name=%s type=%s tool=%s",
+                    rule.get("id"),
+                    rule.get("name"),
+                    rule_type,
+                    tool_name,
+                )
 
                 if rule_type == "BLOCK_TOOL":
                     evaluate_block_tool(rule, tool_name, arguments, context)
@@ -150,11 +172,15 @@ class PolicyEngine:
                 "approval_id": None,
             }
             logger.warning(
-                "[POLICY] BLOCKED | tool=%s rule=%s reason=%s",
+                "[POLICY] TOOL BLOCKED | tool=%s rule_id=%s rule_name=%s reason=%s",
                 tool_name,
+                exc.rule_id,
                 exc.rule_name,
                 exc.reason,
             )
+            # Increment hit counter in rules.json so dashboard shows real data.
+            if exc.rule_id:
+                rule_store.increment_hits(exc.rule_id)
 
         except ApprovalRequired as exc:
             decision = {
@@ -165,11 +191,14 @@ class PolicyEngine:
                 "approval_id": exc.approval_id,
             }
             logger.warning(
-                "[POLICY] APPROVAL REQUIRED | tool=%s approval_id=%s rule=%s",
+                "[POLICY] APPROVAL REQUIRED | tool=%s approval_id=%s rule_id=%s rule_name=%s",
                 tool_name,
                 exc.approval_id,
+                exc.rule_id,
                 exc.rule_name,
             )
+            if exc.rule_id:
+                rule_store.increment_hits(exc.rule_id)
 
         except BudgetExceeded as exc:
             decision = {
@@ -180,12 +209,15 @@ class PolicyEngine:
                 "approval_id": None,
             }
             logger.warning(
-                "[POLICY] BUDGET EXCEEDED | tool=%s session=%s usage=%d limit=%d",
+                "[POLICY] BUDGET EXCEEDED | tool=%s session=%s usage=%d limit=%d rule_id=%s",
                 tool_name,
                 exc.session_id,
                 exc.current,
                 exc.limit,
+                exc.rule_id,
             )
+            if exc.rule_id:
+                rule_store.increment_hits(exc.rule_id)
 
         # Persist to DB (import deferred to avoid Django app registry issues)
         self._log_tool_call(
@@ -196,9 +228,10 @@ class PolicyEngine:
         )
 
         logger.info(
-            "[POLICY] Decision | tool=%s action=%s rule=%s",
+            "[POLICY] Decision | tool=%s action=%s rule_id=%s rule_name=%s",
             tool_name,
             decision["action"],
+            decision.get("rule_id"),
             decision.get("rule_name"),
         )
         return decision
