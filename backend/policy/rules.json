@@ -1,0 +1,21 @@
+[
+  {
+    "id": "default-block-delete",
+    "name": "Block Delete Note",
+    "type": "BLOCK_TOOL",
+    "enabled": true,
+    "priority": 10,
+    "pattern": "delete_note"
+  },
+  {
+    "id": "default-title-validation",
+    "name": "Title Must Be Alphanumeric",
+    "type": "INPUT_VALIDATION",
+    "enabled": false,
+    "priority": 50,
+    "tool": "create_note",
+    "parameter": "title",
+    "validation_type": "matches_regex",
+    "validation_value": "^[a-zA-Z0-9_\\s\\-]+$"
+  }
+]
