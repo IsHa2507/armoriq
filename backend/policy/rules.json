@@ -3,10 +3,10 @@
     "id": "default-block-delete",
     "name": "Block Delete Note",
     "type": "BLOCK_TOOL",
-    "enabled": true,
+    "enabled": false,
     "priority": 10,
     "pattern": "delete_note",
-    "hits": 3
+    "hits": 4
   },
   {
     "id": "default-title-validation",
@@ -37,5 +37,23 @@
     "priority": 5,
     "hits": 3,
     "pattern": "create_note"
+  },
+  {
+    "id": "33e91935-ca70-42ab-a8a5-ca573b1b8e88",
+    "name": "Block Tool: fs_delete_file",
+    "type": "BLOCK_TOOL",
+    "enabled": false,
+    "priority": 100,
+    "hits": 1,
+    "pattern": "fs_delete_file"
+  },
+  {
+    "id": "25dd2079-5a76-43cd-a822-b99eba0f94c7",
+    "name": "Req. Approval: fs_delete_file",
+    "type": "REQUIRE_APPROVAL",
+    "enabled": true,
+    "priority": 100,
+    "hits": 1,
+    "pattern": "fs_delete_file"
   }
 ]

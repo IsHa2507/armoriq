@@ -31,134 +31,268 @@ class MockLLM:
     agent loop below.
     """
 
+    # ── filename / path extractor ─────────────────────────────────────────
+    # Matches things like: README.md  hello.txt  path/to/file.py  .env
+    _FILE_PATTERN = re.compile(
+        r"[\"']?([\w./\-]+\.[\w]+)[\"']?",
+        re.IGNORECASE,
+    )
+    # Matches any word that looks like a path even without an extension (e.g. "src/main")
+    _PATH_PATTERN = re.compile(
+        r"[\"']?([\w./\-]+)[\"']?",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _extract_path(message: str, require_extension: bool = False) -> Optional[str]:
+        """
+        Pull the first filename-like token out of a message.
+
+        Strategy (in order):
+        1. Quoted string:  "README.md"  or  'test.txt'
+        2. Token with extension:  README.md  test.txt  src/utils.py  .env
+        3. Any path token (if require_extension is False)
+
+        Returns None if nothing plausible is found.
+        """
+        # 1. Explicit quotes
+        quoted = re.search(r'["\']([^"\']+)["\']', message)
+        if quoted:
+            return quoted.group(1).strip()
+
+        # 2a. Dotfile (e.g. .env, .gitignore, .bashrc) — no extension needed
+        dotfile = re.search(r'(?<!\S)(\.[a-zA-Z][a-zA-Z0-9_\-]{0,30})\b', message)
+        if dotfile:
+            return dotfile.group(1).strip()
+
+        # 2b. Token with a dot-extension:  README.md  test.txt  src/utils.py
+        ext_match = re.search(r'(?<!\w)(\.?[\w./\-]+\.[a-zA-Z0-9]{1,10})\b', message)
+        if ext_match:
+            return ext_match.group(1).strip()
+
+        # 3. Any path token (only when extension not required)
+        if not require_extension:
+            stop = {"in", "of", "the", "a", "an", "to", "at", "for", "and",
+                    "if", "is", "it", "on", "from", "by", "be", "with", "that",
+                    "there", "current", "directory", "dir", "files", "file",
+                    "project", "root", "here"}
+            for tok in message.split():
+                tok_clean = tok.strip("?.,!:;\"'")
+                if tok_clean.lower() not in stop and len(tok_clean) > 1:
+                    if "/" in tok_clean or "." in tok_clean:
+                        return tok_clean
+        return None
+
     def _parse_user_intent(self, message: str) -> Optional[Dict[str, Any]]:
-        """Return {"tool": str, "arguments": dict} or None if no tool needed."""
+        """
+        Deterministically map a natural-language message to a tool + arguments.
+
+        Returns {"tool": str, "arguments": dict} or None.
+
+        ORDER IS IMPORTANT:
+          Filesystem intents that share surface-level keywords with note intents
+          (create, delete, read, list) are checked FIRST so they win.
+        """
         msg = message.lower()
 
-        # ── delete (check before other operations) ────────────────────────
+        logger.debug("[AGENT] Parsing intent | message=%.120s", message)
+
+        # ══════════════════════════════════════════════════════════════════
+        # FILESYSTEM INTENTS  (must come before notes to avoid ambiguity)
+        # ══════════════════════════════════════════════════════════════════
+
+        # ── fs_file_exists ────────────────────────────────────────────────
+        # Triggers: "check if X exists", "does X exist", "is X present",
+        #           "exists X", "file exists", "check file X"
+        _exists_trigger = bool(re.search(
+            r"\b(check\s+if|does\b.+\bexist|is\b.+\bpresent|"
+            r"exist[s]?\b|check\s+file|file\s+exist[s]?|is\s+there\s+a)\b",
+            msg,
+        ))
+        if _exists_trigger:
+            path = self._extract_path(message) or "."
+            logger.debug("[AGENT] Parsed intent | tool=fs_file_exists path=%s", path)
+            return {"tool": "fs_file_exists", "arguments": {"path": path}}
+
+        # ── fs_delete_file ────────────────────────────────────────────────
+        # "delete file X", "remove file X", "erase file X"
+        # Kept before generic delete/remove so "delete file" wins over delete_note
+        if any(w in msg for w in ("delete file", "remove file", "erase file",
+                                   "rm file", "unlink")):
+            path = self._extract_path(message, require_extension=True) or "output.txt"
+            logger.debug("[AGENT] Parsed intent | tool=fs_delete_file path=%s", path)
+            return {"tool": "fs_delete_file", "arguments": {"path": path}}
+
+        # ── fs_write_file ─────────────────────────────────────────────────
+        # "write file X", "create file X", "save file X", "make file X"
+        # "write X with content Y", "save to X"
+        _write_trigger = any(w in msg for w in (
+            "write file", "create file", "save file", "make file",
+            "write to file", "new file", "create a file",
+        ))
+        if _write_trigger:
+            path = self._extract_path(message, require_extension=True) or "output.txt"
+            # Content: text after "with content", "content:", ":", or "containing"
+            content_m = re.search(
+                r"(?:with\s+content|content[:\s]|containing|:\s*)(.+)$",
+                message,
+                re.IGNORECASE,
+            )
+            content = content_m.group(1).strip() if content_m else ""
+            logger.debug("[AGENT] Parsed intent | tool=fs_write_file path=%s content=%.40s",
+                         path, content)
+            return {"tool": "fs_write_file", "arguments": {"path": path, "content": content}}
+
+        # ── fs_list_directory ─────────────────────────────────────────────
+        # "list files [in X]", "show files", "ls [X]", "what files",
+        # "current directory", "project root", "list directory", "show directory"
+        _list_trigger = bool(re.search(
+            r"\b(list\s+files|show\s+files|ls\b|what\s+files|"
+            r"list\s+dir(ectory)?|show\s+dir(ectory)?|"
+            r"current\s+dir(ectory)?|project\s+root|"
+            r"what['']?s\s+in|what\s+is\s+in|contents?\s+of\s+dir)\b",
+            msg,
+        ))
+        if _list_trigger:
+            # Path after "in", "of", "directory", "dir" — but not stop-words
+            _stop = {"the", "a", "an", "current", "this", "my", "our"}
+            path_m = re.search(
+                r"(?:in|of|directory|dir)\s+([\"']?[\w./\-]+[\"']?)",
+                message,
+                re.IGNORECASE,
+            )
+            if path_m:
+                candidate = path_m.group(1).strip("\"'")
+                path = "." if candidate.lower() in _stop else candidate
+            else:
+                path = "."
+            logger.debug("[AGENT] Parsed intent | tool=fs_list_directory path=%s", path)
+            return {"tool": "fs_list_directory", "arguments": {"path": path}}
+
+        # ── fs_read_file ──────────────────────────────────────────────────
+        # "read X", "open X", "show X", "cat X", "display X", "print X",
+        # "show contents of X", "read the file X"
+        # Key improvement: allow the file-like token to appear ANYWHERE,
+        # not just after the literal word "file".
+        _read_trigger = bool(re.search(
+            r"\b(read|open|show|cat|display|print|view|see|get)\b",
+            msg,
+        )) and (
+            # Must reference something file-like (has extension or explicit "file" keyword)
+            bool(re.search(r"\b[\w./\-]+\.[a-zA-Z0-9]{1,10}\b", msg))
+            or "file" in msg
+            or "content" in msg
+        )
+        if _read_trigger:
+            path = self._extract_path(message, require_extension=True) or "output.txt"
+            logger.debug("[AGENT] Parsed intent | tool=fs_read_file path=%s", path)
+            return {"tool": "fs_read_file", "arguments": {"path": path}}
+
+        # ══════════════════════════════════════════════════════════════════
+        # NOTES INTENTS
+        # ══════════════════════════════════════════════════════════════════
+
+        # ── delete_note ───────────────────────────────────────────────────
         if any(w in msg for w in ("delete", "remove", "erase")):
             m = re.search(r"(?:note\s+)?(\d+)", message, re.IGNORECASE)
             if m:
+                logger.debug("[AGENT] Parsed intent | tool=delete_note note_id=%s", m.group(1))
                 return {"tool": "delete_note", "arguments": {"note_id": m.group(1)}}
 
-        # ── create ────────────────────────────────────────────────────────
+        # ── create_note ───────────────────────────────────────────────────
         if any(w in msg for w in ("create", "make", "add", "new note")):
-            title_m = re.search(r"titled?\s+[\"']?([^\"']+)[\"']?", message, re.IGNORECASE)
+            title_m   = re.search(r"titled?\s+[\"']?([^\"']+)[\"']?", message, re.IGNORECASE)
             content_m = re.search(r"content\s+[\"']?([^\"']+)[\"']?", message, re.IGNORECASE)
-            title = title_m.group(1).strip() if title_m else "Untitled"
+            title   = title_m.group(1).strip()   if title_m   else "Untitled"
             content = content_m.group(1).strip() if content_m else "No content"
             if not content_m:
                 about_m = re.search(r"about\s+(.+)", message, re.IGNORECASE)
                 if about_m:
                     content = about_m.group(1).strip()
-            return {
-                "tool": "create_note",
-                "arguments": {"title": title, "content": content, "tags": []},
-            }
+            logger.debug("[AGENT] Parsed intent | tool=create_note title=%s", title)
+            return {"tool": "create_note", "arguments": {"title": title, "content": content, "tags": []}}
 
-        # ── list ──────────────────────────────────────────────────────────
+        # ── list_notes ────────────────────────────────────────────────────
         if any(w in msg for w in ("list", "show all", "get all", "display")) and "note" in msg:
+            logger.debug("[AGENT] Parsed intent | tool=list_notes")
             return {"tool": "list_notes", "arguments": {}}
 
-        # ── update ────────────────────────────────────────────────────────
+        # ── update_note ───────────────────────────────────────────────────
         if any(w in msg for w in ("update", "edit", "modify", "change")) and "note" in msg:
-            id_m = re.search(r"note\s+(\d+)", message, re.IGNORECASE)
+            id_m      = re.search(r"note\s+(\d+)", message, re.IGNORECASE)
             content_m = re.search(r"(?:content|to)\s+[\"']?([^\"']+)[\"']?", message, re.IGNORECASE)
             if id_m:
                 args: Dict[str, Any] = {"note_id": id_m.group(1)}
                 if content_m:
                     args["content"] = content_m.group(1).strip()
+                logger.debug("[AGENT] Parsed intent | tool=update_note note_id=%s", id_m.group(1))
                 return {"tool": "update_note", "arguments": args}
 
-        # ── get note by id ────────────────────────────────────────────────
+        # ── get_note ──────────────────────────────────────────────────────
         if any(w in msg for w in ("get note", "show note", "view note", "note ")):
             id_m = re.search(r"note\s+(\d+)", message, re.IGNORECASE)
             if id_m:
+                logger.debug("[AGENT] Parsed intent | tool=get_note note_id=%s", id_m.group(1))
                 return {"tool": "get_note", "arguments": {"note_id": id_m.group(1)}}
 
-        # ── filesystem: write file ────────────────────────────────────────
-        if any(w in msg for w in ("write file", "create file", "save file", "write to file")):
-            path_m = re.search(r"(?:file\s+|to\s+)[\"']?([\w./\-]+\.\w+)[\"']?", message, re.IGNORECASE)
-            content_m = re.search(r"(?:content|with|:)\s+[\"']?(.+)[\"']?$", message, re.IGNORECASE)
-            path = path_m.group(1).strip() if path_m else "output.txt"
-            content = content_m.group(1).strip() if content_m else ""
-            return {"tool": "fs_write_file", "arguments": {"path": path, "content": content}}
-
-        # ── filesystem: read file ─────────────────────────────────────────
-        if any(w in msg for w in ("read file", "show file", "open file", "get file", "cat file")):
-            path_m = re.search(r"(?:file\s+)[\"']?([\w./\-]+)[\"']?", message, re.IGNORECASE)
-            path = path_m.group(1).strip() if path_m else "output.txt"
-            return {"tool": "fs_read_file", "arguments": {"path": path}}
-
-        # ── filesystem: list directory ────────────────────────────────────
-        if any(w in msg for w in ("list files", "list directory", "show directory",
-                                   "list dir", "show dir", "ls ")):
-            path_m = re.search(r"(?:directory|dir|in|of)\s+[\"']?([\w./\-]+)[\"']?",
-                                message, re.IGNORECASE)
-            path = path_m.group(1).strip() if path_m else "."
-            return {"tool": "fs_list_directory", "arguments": {"path": path}}
-
-        # ── filesystem: check file existence ──────────────────────────────
-        if any(w in msg for w in ("file exists", "does file exist", "check file",
-                                   "exists file")):
-            path_m = re.search(r"(?:file\s+)[\"']?([\w./\-]+)[\"']?", message, re.IGNORECASE)
-            path = path_m.group(1).strip() if path_m else "output.txt"
-            return {"tool": "fs_file_exists", "arguments": {"path": path}}
-
-        # ── filesystem: delete file ───────────────────────────────────────
-        if any(w in msg for w in ("delete file", "remove file", "erase file")):
-            path_m = re.search(r"(?:file\s+)[\"']?([\w./\-]+\.\w+)[\"']?", message, re.IGNORECASE)
-            path = path_m.group(1).strip() if path_m else "output.txt"
-            return {"tool": "fs_delete_file", "arguments": {"path": path}}
-
+        logger.debug("[AGENT] No intent matched | message=%.120s", message)
         return None
 
     def generate_response(self, message: str, tool_result: str = None) -> str:
         msg = message.lower()
         if tool_result:
-            if "create" in msg and "file" not in msg:
+            # ── notes ──────────────────────────────────────────────────────
+            if any(w in msg for w in ("create_note", "create note", "make note",
+                                       "add note", "new note")) and "file" not in msg:
                 return f"I've successfully created the note for you! {tool_result}"
-            if "list" in msg and "note" in msg:
+            if "list" in msg and "note" in msg and "file" not in msg:
                 return f"Here are all your notes:\n{tool_result}"
-            if ("get" in msg or "show" in msg) and "note" in msg:
+            if ("get" in msg or "show" in msg) and "note" in msg and "file" not in msg:
                 return f"Here's the note you requested:\n{tool_result}"
             if ("update" in msg or "edit" in msg) and "note" in msg:
                 return f"I've updated the note: {tool_result}"
             if ("delete" in msg or "remove" in msg) and "note" in msg:
                 return f"The note has been deleted: {tool_result}"
-            # filesystem responses
-            if "write file" in msg or "create file" in msg or "save file" in msg:
+            # ── filesystem ─────────────────────────────────────────────────
+            if any(w in msg for w in ("write file", "create file", "save file",
+                                       "make file", "new file")):
                 return f"File written successfully:\n{tool_result}"
-            if "read file" in msg or "show file" in msg or "open file" in msg:
+            if any(w in msg for w in ("read", "open", "show", "cat", "display",
+                                       "print", "view", "see", "get")) and (
+                bool(re.search(r'\b[\w./\-]+\.[a-zA-Z0-9]{1,10}\b', msg)) or "file" in msg
+            ):
                 return f"Here is the file content:\n{tool_result}"
-            if "list files" in msg or "list dir" in msg or "list directory" in msg:
+            if any(w in msg for w in ("list files", "show files", "list dir",
+                                       "list directory", "current directory",
+                                       "project root", "ls ")):
                 return f"Here are the directory contents:\n{tool_result}"
-            if "file exists" in msg or "check file" in msg:
+            if any(w in msg for w in ("exist", "present", "check")):
                 return f"File existence check result:\n{tool_result}"
-            if "delete file" in msg or "remove file" in msg:
+            if any(w in msg for w in ("delete file", "remove file", "erase file")):
                 return f"File deleted:\n{tool_result}"
-            return f"Operation completed: {tool_result}"
+            return f"Operation completed:\n{tool_result}"
         if any(w in msg for w in ("hello", "hi", "hey", "help")):
             return (
-                "Hello! I'm your AI assistant with access to a notes management system "
-                "and a filesystem workspace. I can help you:\n"
+                "Hello! I'm your AI assistant. I can manage notes and interact with "
+                "the filesystem workspace.\n\n"
                 "Notes:\n"
-                "  - Create notes: \"Create a note titled X with content Y\"\n"
-                "  - List notes:   \"List all notes\"\n"
-                "  - Get a note:   \"Get note 1\"\n"
-                "  - Update a note:\"Update note 1 to have content Z\"\n"
-                "  - Delete a note:\"Delete note 1\"\n\n"
+                "  Create note titled X with content Y\n"
+                "  List all notes\n"
+                "  Get note 1\n"
+                "  Update note 1 to have content Z\n"
+                "  Delete note 1\n\n"
                 "Filesystem:\n"
-                "  - Write file:   \"Write file hello.txt with content Hello World\"\n"
-                "  - Read file:    \"Read file hello.txt\"\n"
-                "  - List dir:     \"List files in .\"\n"
-                "  - Check file:   \"Does file hello.txt exist?\"\n"
-                "  - Delete file:  \"Delete file hello.txt\"\n\n"
+                "  Read README.md\n"
+                "  Check if README.md exists\n"
+                "  List files in the current directory\n"
+                "  Create file test.txt with content Hello\n"
+                "  Delete file test.txt\n\n"
                 "What would you like to do?"
             )
         return (
-            "I'm not sure what you'd like me to do. Could you please rephrase? "
-            "I can manage notes or perform filesystem operations."
+            "I'm not sure what you'd like me to do. Could you please rephrase?\n"
+            "I can manage notes or work with files. Try: "
+            "\"Read README.md\", \"List files\", or \"Create note titled X\"."
         )
 
 
@@ -189,6 +323,7 @@ class LLMAgent:
         tool_call = self.llm._parse_user_intent(user_message)
 
         if not tool_call:
+            logger.info("[AGENT] Parsed intent | result=none session=%s", session_id)
             response = self.llm.generate_response(user_message)
             conversation_log.append({
                 "phase": "Final Response",
@@ -205,6 +340,13 @@ class LLMAgent:
 
         tool_name: str = tool_call["tool"]
         arguments: Dict[str, Any] = tool_call["arguments"]
+
+        logger.info(
+            "[AGENT] Parsed intent | tool=%s args=%s session=%s",
+            tool_name,
+            json.dumps(arguments),
+            session_id,
+        )
 
         conversation_log.append({
             "phase": "Tool Selected",
