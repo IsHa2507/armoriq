@@ -125,9 +125,30 @@ export const mcpAPI = {
 
 // ── Chat / Agent API ──────────────────────────────────────────────────────────
 
+export interface ChatResponse {
+  status: "completed" | "blocked" | "pending_approval";
+  response?: string;
+  tool?: string;
+  arguments?: Record<string, unknown>;
+  approval_id?: string;
+  message?: string;
+  policy_decision?: {
+    action: string;
+    reason?: string;
+    rule_id?: string | null;
+    rule_name?: string | null;
+    approval_id?: string | null;
+  };
+  conversation_log?: Array<{
+    phase: string;
+    content: string;
+    status: "done" | "warning" | "pending" | "blocked" | "error";
+  }>;
+}
+
 export const chatAPI = {
   sendMessage: (message: string, sessionId?: string) =>
-    request("/chat/", {
+    request<ChatResponse>("/chat/", {
       method: "POST",
       body: JSON.stringify({ message, session_id: sessionId }),
     }),
