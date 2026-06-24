@@ -2,7 +2,7 @@ import { useState } from "react";
 import { GlassCard, RiskBadge } from "@/components/dashboard/widgets";
 import { Bot, User, Send, Wrench, ShieldCheck, Zap, AlertTriangle, Check, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { chatAPI } from "@/services/api";
+import { chatAPI, type ChatResponse } from "@/services/api";
 import type { LucideIcon } from "lucide-react";
 
 const iconForPhase: Record<string, LucideIcon> = {
@@ -29,14 +29,14 @@ export function AgentConsolePage() {
     setMessages(prev => [...prev, { role: "user", content: userMessage }]);
 
     try {
-      const result = await chatAPI.sendMessage(userMessage);
+      const result: ChatResponse = await chatAPI.sendMessage(userMessage);
       
       if (result.conversation_log) {
         setTimeline(result.conversation_log);
       }
 
       if (result.response) {
-        setMessages(prev => [...prev, { role: "assistant", content: result.response }]);
+        setMessages(prev => [...prev, { role: "assistant", content: result.response ?? "" }]);
       } else if (result.status === "pending_approval") {
         setMessages(prev => [...prev, { 
           role: "system", 
