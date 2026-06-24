@@ -27,24 +27,48 @@ def init_mcp_servers() -> None:
     """
     Register all MCP servers with the global mcp_client singleton.
 
-    Server 1 — notes-server   (custom, in-process notes CRUD)
-    Server 2 — filesystem-server  (sandboxed filesystem operations)
+    Server 1 — notes-server        (CUSTOM   — in-process notes CRUD)
+    Server 2 — filesystem-server   (CUSTOM   — sandboxed filesystem ops)
+    Server 3 — context7            (REMOTE   — real public MCP server by Upstash)
+                                              live documentation + code examples
+                                              for any library / framework.
+                                              Runs via: npx @upstash/context7-mcp
+                                              No API key required.
+                                              Tools discovered dynamically via tools/list.
 
-    Both use the STDIO transport and the JSON-RPC 2.0 protocol that the
-    MCPClient already handles.  PolicyEngine governs every tool call from
-    both servers identically — no special-casing needed.
+    All three use the STDIO / JSON-RPC 2.0 transport.
+    PolicyEngine governs every tool call from all servers identically.
+    Tool names are never hardcoded — discovery happens via tools/list on startup.
     """
     logger.info("[MCP] Initialising MCP servers…")
 
-    # ── Server 1: Notes MCP ───────────────────────────────────────────────
+    # ── Server 1: Notes MCP (CUSTOM) ─────────────────────────────────────
     notes_path = _server_path("notes_server.py")
-    logger.info("[MCP] Registering notes-server | path=%s", notes_path)
+    logger.info("[MCP] Registering notes-server (custom) | path=%s", notes_path)
     mcp_client.add_server("notes-server", "python3", [notes_path])
 
-    # ── Server 2: Filesystem MCP ──────────────────────────────────────────
+    # ── Server 2: Filesystem MCP (CUSTOM) ────────────────────────────────
     fs_path = _server_path("filesystem_server.py")
-    logger.info("[MCP] Registering filesystem-server | path=%s", fs_path)
+    logger.info("[MCP] Registering filesystem-server (custom) | path=%s", fs_path)
     mcp_client.add_server("filesystem-server", "python3", [fs_path])
+
+    # ── Server 3: Context7 MCP (REMOTE — real public server) ─────────────
+    # Context7 is a publicly available MCP server by Upstash.
+    # It provides live, up-to-date documentation and code examples for any
+    # library or framework (React, Django, Next.js, etc.) via two tools:
+    #   • resolve-library-id  — maps a library name to a Context7 ID
+    #   • query-docs          — fetches real docs for that library ID
+    #
+    # Transport  : STDIO (same as custom servers — no protocol change needed)
+    # Requirement: Node.js + npx must be available on the host
+    # API key    : NOT required
+    # Source     : https://github.com/upstash/context7
+    logger.info("[MCP] Registering context7 (remote public MCP server)")
+    mcp_client.add_server(
+        "context7",
+        "npx",
+        ["-y", "@upstash/context7-mcp@latest"],
+    )
 
     status = mcp_client.get_server_status()
     for name, info in status.items():
