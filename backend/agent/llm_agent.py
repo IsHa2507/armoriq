@@ -260,7 +260,7 @@ class MockLLM:
                 r"resolve\s+(?:library|id|docs?)\s+(?:for\s+)?|"
                 r"search\s+context7\s+for|"
                 r"context7\s+(?:find|search|lookup|look\s+up)\s+)"
-                r"([\\w.\\-/]+(?:\\s+[\\w.\\-/]+){0,3})",
+                r"([\w.\-/]+(?:\s+[\w.\-/]+){0,3})",
                 message,
                 re.IGNORECASE,
             )
@@ -306,7 +306,7 @@ class MockLLM:
                 r"(?:get\s+docs?\s+for|show\s+docs?\s+for|"
                 r"fetch\s+docs?\s+(?:for|from)|documentation\s+for|"
                 r"context7\s+docs?\s+for?|"
-                r"how\s+(?:do\s+i|to)\s+use\s+)([\\w.\\-/]+(?:\\s+[\\w.\\-/]+){0,3})",
+                r"how\s+(?:do\s+i|to)\s+use\s+)([\w.\-/]+(?:\s+[\w.\-/]+){0,3})",
                 message,
                 re.IGNORECASE,
             )
