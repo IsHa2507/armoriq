@@ -1,0 +1,59 @@
+[
+  {
+    "id": "default-block-delete",
+    "name": "Block Delete Note",
+    "type": "BLOCK_TOOL",
+    "enabled": false,
+    "priority": 10,
+    "pattern": "delete_note",
+    "hits": 4
+  },
+  {
+    "id": "default-title-validation",
+    "name": "Title Must Be Alphanumeric",
+    "type": "INPUT_VALIDATION",
+    "enabled": false,
+    "priority": 50,
+    "tool": "create_note",
+    "parameter": "title",
+    "validation_type": "matches_regex",
+    "validation_value": "^[a-zA-Z0-9_\\s\\-]+$",
+    "hits": 0
+  },
+  {
+    "id": "d0dce152-aa1e-4ca0-afb4-d26b2c5b5b3e",
+    "name": "AUDIT: Block create_note",
+    "type": "BLOCK_TOOL",
+    "enabled": false,
+    "priority": 5,
+    "hits": 2,
+    "pattern": "create_note"
+  },
+  {
+    "id": "1234070a-ed6b-4e21-8287-cbfadc7c9157",
+    "name": "AUDIT: Require Approval create_note",
+    "type": "REQUIRE_APPROVAL",
+    "enabled": true,
+    "priority": 5,
+    "hits": 3,
+    "pattern": "create_note"
+  },
+  {
+    "id": "33e91935-ca70-42ab-a8a5-ca573b1b8e88",
+    "name": "Block Tool: fs_delete_file",
+    "type": "BLOCK_TOOL",
+    "enabled": false,
+    "priority": 100,
+    "hits": 1,
+    "pattern": "fs_delete_file"
+  },
+  {
+    "id": "25dd2079-5a76-43cd-a822-b99eba0f94c7",
+    "name": "Req. Approval: fs_delete_file",
+    "type": "REQUIRE_APPROVAL",
+    "enabled": true,
+    "priority": 100,
+    "hits": 1,
+    "pattern": "fs_delete_file"
+  }
+]
