@@ -167,3 +167,59 @@ export const logsAPI = {
 export const healthAPI = {
   check: () => request("/health/"),
 };
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+
+export interface DashboardKpis {
+  active_sessions: number;
+  mcp_servers: string;
+  tool_calls_today: number;
+  blocked_today: number;
+  pending_approvals: number;
+  uptime_pct: number;
+}
+
+export interface DashboardKpiDeltas {
+  tool_calls_today: string;
+  blocked_today: string;
+}
+
+export interface ToolUsagePoint {
+  hour: string;
+  calls: number;
+  blocked: number;
+}
+
+export interface TopTool {
+  name: string;
+  calls: number;
+}
+
+export interface SecurityEvent {
+  time: string;
+  severity: "info" | "warning" | "critical";
+  agent: string;
+  tool: string;
+  message: string;
+  status: string;
+}
+
+export interface ThreatShield {
+  score: number;
+  allowed: number;
+  blocked: number;
+  pending: number;
+}
+
+export interface DashboardData {
+  kpis: DashboardKpis;
+  kpi_deltas: DashboardKpiDeltas;
+  tool_usage_series: ToolUsagePoint[];
+  top_tools: TopTool[];
+  security_events: SecurityEvent[];
+  threat_shield: ThreatShield;
+}
+
+export const dashboardAPI = {
+  get: () => request<DashboardData>("/dashboard/"),
+};

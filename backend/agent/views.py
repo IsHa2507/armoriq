@@ -225,6 +225,7 @@ def get_analytics(request):
         ToolCall.objects.filter(timestamp__gte=last_24h)
         .values("tool_name")
         .annotate(count=Count("id"))
+        .order_by("-count")
     )
     status_counts = (
         ToolCall.objects.filter(timestamp__gte=last_24h)
@@ -237,12 +238,177 @@ def get_analytics(request):
         "status_counts": list(status_counts),
         "total_calls": ToolCall.objects.filter(timestamp__gte=last_24h).count(),
         "budget_usage": {
-            # expose per-session budget for the dashboard
             session: policy_engine.get_budget_usage(session)
             for session in set(
                 ToolCall.objects.filter(timestamp__gte=last_24h)
                 .values_list("session_id", flat=True)
                 .distinct()
             )
+        },
+    })
+
+
+@api_view(["GET"])
+def get_dashboard(request):
+    """
+    Single endpoint that powers the entire Dashboard page.
+
+    Returns all KPI values, the 24-hour tool-usage time series,
+    top tools by call count, recent security events (ToolCall rows),
+    and Threat Shield totals — all sourced from the live database.
+    """
+    from django.db.models import Count
+    from datetime import timedelta, datetime
+
+    now = timezone.now()
+    last_24h = now - timedelta(hours=24)
+
+    # ── KPI: Tool calls today ─────────────────────────────────────────────
+    total_calls_today = ToolCall.objects.filter(timestamp__gte=last_24h).count()
+    total_calls_prev  = ToolCall.objects.filter(
+        timestamp__gte=last_24h - timedelta(hours=24),
+        timestamp__lt=last_24h,
+    ).count()
+
+    # ── KPI: Blocked actions (last 24h) ───────────────────────────────────
+    blocked_today = ToolCall.objects.filter(
+        timestamp__gte=last_24h, status="blocked"
+    ).count()
+    blocked_prev  = ToolCall.objects.filter(
+        timestamp__gte=last_24h - timedelta(hours=24),
+        timestamp__lt=last_24h,
+        status="blocked",
+    ).count()
+
+    # ── KPI: Pending approvals ────────────────────────────────────────────
+    pending_approvals = ApprovalRequest.objects.filter(status="pending").count()
+
+    # ── KPI: MCP servers connected ────────────────────────────────────────
+    server_status = mcp_client.get_server_status()
+    mcp_connected = sum(1 for s in server_status.values() if s.get("status") == "connected")
+    mcp_total     = len(server_status)
+
+    # ── KPI: Uptime (server start → now) ─────────────────────────────────
+    # Approximate: ratio of healthy requests vs total, or report process uptime.
+    # We derive from ToolCall success rate as a proxy; fallback to 100% when empty.
+    total_all = ToolCall.objects.count()
+    error_count = ToolCall.objects.filter(status="error").count()
+    uptime_pct = round(((total_all - error_count) / total_all * 100), 2) if total_all else 100.0
+
+    # ── KPI: Active sessions (distinct session_ids in last 24h) ──────────
+    active_sessions = (
+        ToolCall.objects.filter(timestamp__gte=last_24h)
+        .values("session_id")
+        .distinct()
+        .count()
+    )
+
+    # delta helpers (formatted as "+N" / "-N" / "0")
+    def _delta(current: int, previous: int) -> str:
+        diff = current - previous
+        return f"+{diff}" if diff > 0 else str(diff)
+
+    def _pct_delta(current: int, previous: int) -> str:
+        if previous == 0:
+            return "+0%"
+        pct = round((current - previous) / previous * 100)
+        return f"+{pct}%" if pct >= 0 else f"{pct}%"
+
+    # ── Tool usage time series (last 24h, hourly buckets) ─────────────────
+    series = []
+    for h in range(24):
+        bucket_start = last_24h + timedelta(hours=h)
+        bucket_end   = bucket_start + timedelta(hours=1)
+        calls   = ToolCall.objects.filter(
+            timestamp__gte=bucket_start, timestamp__lt=bucket_end
+        ).count()
+        blocked = ToolCall.objects.filter(
+            timestamp__gte=bucket_start, timestamp__lt=bucket_end, status="blocked"
+        ).count()
+        series.append({
+            "hour":    bucket_start.strftime("%H:%M"),
+            "calls":   calls,
+            "blocked": blocked,
+        })
+
+    # ── Top tools (all time) ──────────────────────────────────────────────
+    top_tools_qs = (
+        ToolCall.objects.values("tool_name")
+        .annotate(calls=Count("id"))
+        .order_by("-calls")[:10]
+    )
+    top_tools = [{"name": row["tool_name"], "calls": row["calls"]} for row in top_tools_qs]
+
+    # ── Security events (last 20 ToolCall rows, newest first) ─────────────
+    recent_calls = ToolCall.objects.order_by("-timestamp")[:20]
+    security_events = []
+    for tc in recent_calls:
+        decision   = tc.policy_decision or {}
+        rule_name  = decision.get("rule_name") or "N/A"
+        action_str = decision.get("action", "allow")
+        if tc.status == "blocked":
+            severity = "warning"
+            message  = (
+                f"Tool '{tc.tool_name}' blocked by rule '{rule_name}' "
+                f"in session {tc.session_id}."
+            )
+        elif tc.status == "pending":
+            severity = "info"
+            message  = (
+                f"Tool '{tc.tool_name}' pending approval "
+                f"in session {tc.session_id}."
+            )
+        elif tc.status == "error":
+            severity = "critical"
+            message  = (
+                f"Tool '{tc.tool_name}' execution error "
+                f"in session {tc.session_id}."
+            )
+        else:
+            severity = "info"
+            message  = (
+                f"Tool '{tc.tool_name}' executed successfully "
+                f"in session {tc.session_id}."
+            )
+        security_events.append({
+            "time":     tc.timestamp.strftime("%H:%M:%S"),
+            "severity": severity,
+            "agent":    tc.session_id,
+            "tool":     tc.tool_name,
+            "message":  message,
+            "status":   tc.status,
+        })
+
+    # ── Threat Shield totals ──────────────────────────────────────────────
+    allowed_total = ToolCall.objects.filter(status="executed").count()
+    blocked_total = ToolCall.objects.filter(status="blocked").count()
+    pending_total = ApprovalRequest.objects.filter(status="pending").count()
+    # Security score: penalise errors and blocks; floor at 0, ceil at 100
+    if total_all > 0:
+        score = max(0, min(100, round(100 - (error_count + blocked_total * 0.1) / total_all * 100)))
+    else:
+        score = 100
+
+    return Response({
+        "kpis": {
+            "active_sessions":  active_sessions,
+            "mcp_servers":      f"{mcp_connected}/{mcp_total}",
+            "tool_calls_today": total_calls_today,
+            "blocked_today":    blocked_today,
+            "pending_approvals": pending_approvals,
+            "uptime_pct":       uptime_pct,
+        },
+        "kpi_deltas": {
+            "tool_calls_today": _pct_delta(total_calls_today, total_calls_prev),
+            "blocked_today":    _delta(blocked_today, blocked_prev),
+        },
+        "tool_usage_series": series,
+        "top_tools":         top_tools,
+        "security_events":   security_events,
+        "threat_shield": {
+            "score":   score,
+            "allowed": allowed_total,
+            "blocked": blocked_total,
+            "pending": pending_total,
         },
     })
